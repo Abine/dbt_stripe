@@ -11,11 +11,14 @@ with balance_transaction_joined as (
 ), daily_balance_transactions as (
 
   select
+  date_trunc(day, CONVERT_TIMEZONE('America/New_York',
       case 
             when type = 'payout' 
-            then {{ date_timezone('available_on') }}  
+            then {{ date_timezone('available_on') }} 
+            when type in ('charge', 'payment')
+            then {{ date_timezone('revenue_recognition_date') }} 
             else {{ date_timezone('created_at') }} 
-      end as date,
+      end)::TIMESTAMP_NTZ) as date,
     sum(case when type in ('charge', 'payment') 
           then amount 
           else 0 end) as total_sales,
@@ -51,7 +54,34 @@ with balance_transaction_joined as (
           else 0 end) as total_payouts_count,
     count(distinct case when type = 'adjustment' 
             then coalesce(source, payout_id) 
-            else null end) as total_adjustments_count
+            else null end) as total_adjustments_count,
+    sum(case when type in ('charge', 'payment') and customer_type = 1
+          then amount 
+          else 0 end) as total_sales_b2b,
+    sum(case when type in ('payment_refund', 'refund') and customer_type = 1
+          then amount 
+          else 0 end) as total_refunds_b2b,
+    sum(case when type = 'adjustment' and customer_type = 1
+          then amount 
+          else 0 end) as total_adjustments_b2b,
+    sum(case when type in ('charge', 'payment') and customer_type = 0
+          then amount 
+          else 0 end) as total_sales_b2c,
+    sum(case when type in ('payment_refund', 'refund') and customer_type = 0
+          then amount 
+          else 0 end) as total_refunds_b2c,
+    sum(case when type = 'adjustment' and customer_type = 0
+          then amount 
+          else 0 end) as total_adjustments_b2c,
+    sum(case when type in ('charge', 'payment') and customer_type = -1
+          then amount 
+          else 0 end) as total_sales_unattributed,
+    sum(case when type in ('payment_refund', 'refund') and customer_type = -1
+          then amount 
+          else 0 end) as total_refunds_unattributed,
+    sum(case when type = 'adjustment' and customer_type = -1
+          then amount 
+          else 0 end) as total_adjustments_unattributed
   from balance_transaction_joined
   group by 1
 
@@ -67,7 +97,7 @@ with balance_transaction_joined as (
 )
 
 select
-      daily_balance_transactions.date,
+      daily_balance_transactions.date as date,
       daily_balance_transactions.total_sales/100.0 as total_sales,
       daily_balance_transactions.total_refunds/100.0 as total_refunds,
       daily_balance_transactions.total_adjustments/100.0 as total_adjustments,
@@ -76,6 +106,15 @@ select
       daily_balance_transactions.total_net_transactions/100.0 as total_net_transactions,
       daily_balance_transactions.total_payout_fees/100.0 as total_payout_fees,
       daily_balance_transactions.total_gross_payout_amount/100.0 as total_gross_payout_amount,
+      daily_balance_transactions.total_sales_b2b/100.0 as total_sales_b2b,
+      daily_balance_transactions.total_refunds_b2b/100.0 as total_refunds_b2b,
+      daily_balance_transactions.total_adjustments_b2b/100.0 as total_adjustments_b2b,
+      daily_balance_transactions.total_sales_b2c/100.0 as total_sales_b2c,
+      daily_balance_transactions.total_refunds_b2c/100.0 as total_refunds_b2c,
+      daily_balance_transactions.total_adjustments_b2c/100.0 as total_adjustments_b2c,
+      daily_balance_transactions.total_sales_unattributed/100.0 as total_sales_unattributed,
+      daily_balance_transactions.total_refunds_unattributed/100.0 as total_refunds_unattributed,
+      daily_balance_transactions.total_adjustments_unattributed/100.0 as total_adjustments_unattributed,
       daily_balance_transactions.daily_net_activity/100.0 as daily_net_activity,
       (daily_balance_transactions.daily_net_activity + daily_balance_transactions.total_gross_payout_amount)/100.0 as daily_end_balance,
       daily_balance_transactions.total_sales_count,
